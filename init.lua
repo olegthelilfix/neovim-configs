@@ -216,6 +216,25 @@ end
 local git_timer = (vim.uv or vim.loop).new_timer()
 git_timer:start(180000, 180000, vim.schedule_wrap(autogit))
 
+-- При выходе из Neovim коммитим и пушим синхронно (асинхронно не успеет).
+local function autogit_sync()
+  if not vim.g.autogit_enabled then return end
+  pcall(vim.cmd, "silent! wall")
+  local file = vim.api.nvim_buf_get_name(0)
+  if file == "" then return end
+  local dir = vim.fs.dirname(file)
+  local function git(args)
+    return vim.system(vim.list_extend({ "git", "-C", dir }, args), { text = true }):wait()
+  end
+  if git({ "rev-parse", "--is-inside-work-tree" }).code ~= 0 then return end
+  if (git({ "status", "--porcelain" }).stdout or "") == "" then return end
+  git({ "add", "-A" })
+  if git({ "commit", "-m", "auto: " .. os.date("%Y-%m-%d %H:%M") }).code ~= 0 then return end
+  git({ "push" })
+end
+
+vim.api.nvim_create_autocmd("VimLeavePre", { callback = autogit_sync })
+
 -- команда :AutoGit on|off — включить/выключить фоновый коммит
 vim.api.nvim_create_user_command("AutoGit", function(cmd)
   local arg = cmd.args:lower()
