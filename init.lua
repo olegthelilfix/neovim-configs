@@ -497,6 +497,33 @@ vim.api.nvim_create_user_command("Sentences", function(o)
   reflow_sentences(o.line1, o.line2)
 end, { range = true })
 
+-- Склейка: каждый абзац (блок непустых строк) → одна логическая строка.
+-- Мягкий перенос покажет её красиво в колонке (как iA Writer). Пустые строки
+-- между абзацами сохраняются как разделители.
+local function join_paragraphs(l1, l2)
+  local lines = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
+  local out, cur = {}, {}
+  local function flush()
+    if #cur > 0 then
+      out[#out + 1] = (table.concat(cur, " "):gsub("%s+", " "))
+      cur = {}
+    end
+  end
+  for _, line in ipairs(lines) do
+    if line:match("^%s*$") then
+      flush()
+      out[#out + 1] = ""
+    else
+      cur[#cur + 1] = (line:gsub("^%s+", ""):gsub("%s+$", ""))
+    end
+  end
+  flush()
+  vim.api.nvim_buf_set_lines(0, l1 - 1, l2, false, out)
+end
+vim.api.nvim_create_user_command("Join", function(o)
+  join_paragraphs(o.line1, o.line2)
+end, { range = true })
+
 -- 5. Горячие клавиши (все начинаются с пробела)
 local map = vim.keymap.set
 
@@ -527,6 +554,10 @@ map("v", "<leader>fw", function()
   vim.cmd("normal! gq")
   vim.bo.textwidth = tw
 end, { desc = "Разбить выделение по 80 символов" })
+
+-- Склеить в один абзац на строку (как iA Writer: мягкий перенос сам)
+map("n", "<leader>fj", "vip:Join<cr>", { desc = "Склеить абзац в одну строку" })
+map("v", "<leader>fj", ":Join<cr>",    { desc = "Склеить выделение в одну строку" })
 
 -- Одно предложение на строку: абзац под курсором / выделение
 map("n", "<leader>fs", "vip:Sentences<cr>", { desc = "Одно предложение на строку (абзац)" })
