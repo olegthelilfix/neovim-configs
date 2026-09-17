@@ -251,6 +251,17 @@ vim.api.nvim_create_user_command("AutoGit", function(cmd)
   end
 end, { nargs = "?", complete = function() return { "on", "off" } end })
 
+-- «Сохранить и выйти» отдельными шагами: сначала запись (её BufWritePost
+-- успевает синхронно закоммитить), только потом выход. Иначе при :wq/:x/ZZ
+-- git обрывается уходящим Neovim и коммита не происходит.
+function _G.write_then_quit()
+  vim.cmd("silent! write")   -- триггерит BufWritePost → синхронный коммит завершается тут
+  vim.cmd("quit")
+end
+vim.keymap.set("n", "ZZ", _G.write_then_quit, { desc = "Сохранить, закоммитить и выйти" })
+vim.cmd([[cnoreabbrev <expr> wq (getcmdtype() ==# ':' && getcmdline() ==# 'wq') ? 'lua _G.write_then_quit()' : 'wq']])
+vim.cmd([[cnoreabbrev <expr> x  (getcmdtype() ==# ':' && getcmdline() ==# 'x')  ? 'lua _G.write_then_quit()' : 'x']])
+
 -- 3. Установка менеджера плагинов lazy.nvim (ставится сам при первом запуске)
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not vim.loop.fs_stat(lazypath) then
