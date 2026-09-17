@@ -405,6 +405,22 @@ map("n", "<leader>ts", "<cmd>set spell!<cr>", { desc = "Вкл/выкл орфо
 map("n", "<leader>ng", insert_chapter_template, { desc = "Новая глава (шаблон)" })
 -- z= (варианты замены слова) и zg (добавить в словарь) работают по умолчанию
 
+-- Жёсткий перенос: разбить абзац на строки по 80 символов
+-- (чинит супердлинную строку после вставки). В нормальном режиме — абзац,
+-- в визуальном — выделение.
+map("n", "<leader>fw", function()
+  local tw = vim.bo.textwidth
+  vim.bo.textwidth = 80
+  vim.cmd("normal! gqap")
+  vim.bo.textwidth = tw
+end, { desc = "Разбить абзац по 80 символов" })
+map("v", "<leader>fw", function()
+  local tw = vim.bo.textwidth
+  vim.bo.textwidth = 80
+  vim.cmd("normal! gq")
+  vim.bo.textwidth = tw
+end, { desc = "Разбить выделение по 80 символов" })
+
 -- ИИ
 map({ "n", "v" }, "<leader>ar", ":GpRewrite<cr>",   { desc = "ИИ: переписать" })
 map("v",          "<leader>ap", ":GpProofread<cr>", { desc = "ИИ: вычитать" })
