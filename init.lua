@@ -216,6 +216,17 @@ end
 local git_timer = (vim.uv or vim.loop).new_timer()
 git_timer:start(180000, 180000, vim.schedule_wrap(autogit))
 
+-- Коммит вскоре после сохранения (с задержкой 2 сек, чтобы не частить).
+-- Так правки уходят в git почти сразу, не дожидаясь выхода из редактора.
+local save_debounce = (vim.uv or vim.loop).new_timer()
+vim.api.nvim_create_autocmd("BufWritePost", {
+  callback = function()
+    if not vim.g.autogit_enabled then return end
+    save_debounce:stop()
+    save_debounce:start(2000, 0, vim.schedule_wrap(autogit))
+  end,
+})
+
 -- Синхронный коммит+пуш через vim.fn.system. Возвращает строку-результат.
 -- Используется и при выходе (VimLeavePre), и вручную командой :AutoGitNow.
 function _G.autogit_run()
@@ -256,13 +267,15 @@ local function autogit_exit()
   local file = vim.api.nvim_buf_get_name(0)
   if file == "" then return end
   local dir = vim.fn.shellescape(vim.fn.fnamemodify(file, ":h"))
-  -- весь блок в фигурных скобках, весь вывод — в лог (для диагностики)
+  -- Отсоединённый (detach) процесс переживёт закрытие nvim и сам сделает
+  -- коммит+пуш. Синхронные вызовы на VimLeavePre обрываются, jobstart+detach — нет.
   local cmd = string.format(
-    "{ echo '--- exit run ---'; cd %s && git add -A "
+    "{ echo '--- exit run ---'; cd %s && git rev-parse --is-inside-work-tree "
+    .. ">/dev/null 2>&1 && [ -n \"$(git status --porcelain)\" ] && git add -A "
     .. "&& git commit -m \"auto: %s\" && git push; } >>%s 2>&1",
     dir, os.date("%Y-%m-%d %H:%M"), vim.fn.shellescape(autogit_log)
   )
-  os.execute(cmd)
+  pcall(vim.fn.jobstart, { "sh", "-c", cmd }, { detach = true })
 end
 
 vim.api.nvim_create_autocmd("VimLeavePre", { callback = autogit_exit })
