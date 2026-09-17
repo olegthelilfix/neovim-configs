@@ -76,17 +76,31 @@ local function refresh_battery()
 end
 
 refresh_battery()
--- периодическое обновление заряда (30 000 мс)
+-- периодическое обновление заряда (30 000 мс) + перерисовка панели
 local batt_timer = (vim.uv or vim.loop).new_timer()
-batt_timer:start(30000, 30000, vim.schedule_wrap(refresh_battery))
+batt_timer:start(30000, 30000, vim.schedule_wrap(function()
+  refresh_battery()
+  pcall(vim.cmd, "redrawstatus")
+end))
 
+-- Функции для нативной статусной строки (вызываются из 'statusline' через v:lua).
 -- Статистика текста: слова и знаки (в выделении — только выделенное)
-local function text_stats()
+function _G.writer_stats()
   local wc = vim.fn.wordcount()
   if wc.visual_words then
-    return string.format(" %d сл  %d зн (выд.)", wc.visual_words, wc.visual_chars)
+    return string.format("%d сл  %d зн (выд.)", wc.visual_words, wc.visual_chars)
   end
-  return string.format(" %d сл  %d зн", wc.words, wc.chars)
+  return string.format("%d сл  %d зн", wc.words, wc.chars)
+end
+
+-- Правый блок: статистика · батарея · дата/время
+function _G.writer_status_right()
+  local parts = { _G.writer_stats() }
+  if sys.battery ~= "" then
+    parts[#parts + 1] = sys.battery
+  end
+  parts[#parts + 1] = os.date("%d.%m %H:%M")
+  return table.concat(parts, "   ·   ")
 end
 
 -- 3. Установка менеджера плагинов lazy.nvim (ставится сам при первом запуске)
@@ -141,44 +155,6 @@ require("lazy").setup({
       })
     end,
   },
-  -- Статусная панель: статистика текста + системы
-  {
-    "nvim-lualine/lualine.nvim",
-    dependencies = { "nvim-tree/nvim-web-devicons" },
-    config = function()
-      require("lualine").setup({
-        options = {
-          theme = "kanagawa",
-          globalstatus = true,          -- одна панель на всё окно
-          section_separators = "",
-          component_separators = "│",
-        },
-        sections = {
-          -- слева: режим и файл
-          lualine_a = { "mode" },
-          lualine_b = { { "filename", path = 1 } },
-          lualine_c = {},
-          -- справа: статистика текста → система
-          lualine_x = { text_stats },
-          lualine_y = {
-            { function() return sys.battery end, cond = function() return sys.battery ~= "" end },
-            { function() return os.date("%d.%m %H:%M") end, icon = "" },
-          },
-          lualine_z = { "location" },
-        },
-        -- в неактивных окнах — минимум
-        inactive_sections = {
-          lualine_a = {},
-          lualine_b = {},
-          lualine_c = { "filename" },
-          lualine_x = { "location" },
-          lualine_y = {},
-          lualine_z = {},
-        },
-      })
-    end,
-  },
-
   -- Поиск по файлам и заметкам
   {
     "nvim-telescope/telescope.nvim",
@@ -215,6 +191,17 @@ require("lazy").setup({
 
 }, {
   ui = { border = "rounded" },
+})
+
+-- 4.1 Нативная статусная панель (без плагина — надёжно в любом терминале)
+-- Слева: файл и флаг изменения. Справа: слова/знаки · батарея · дата/время · позиция.
+vim.opt.laststatus = 3   -- одна панель на всё окно
+vim.opt.statusline = table.concat({
+  " %f",                          -- имя файла
+  " %m",                          -- [+] если есть несохранённые правки
+  "%=",                           -- выравнивание вправо
+  "%{v:lua.writer_status_right()}",
+  "   ·   %l:%c ",                -- строка:столбец
 })
 
 -- 5. Горячие клавиши (все начинаются с пробела)
