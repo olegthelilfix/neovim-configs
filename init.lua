@@ -136,7 +136,7 @@ require("lazy").setup({
     "folke/zen-mode.nvim",
     opts = {
       window = { width = 80, options = { number = false } },
-      plugins = { options = { laststatus = 0 } },
+      plugins = { options = { laststatus = 3 } },  -- оставить статусную панель в фокусе
     },
   },
 
