@@ -304,6 +304,16 @@ require("lazy").setup({
     },
   },
 
+  -- Центрированная колонка текста (как iA Writer): постоянные поля по бокам.
+  -- Включается автоматически при запуске; переключить — :NoNeckPain (<leader>fc).
+  {
+    "shortcuts/no-neck-pain.nvim",
+    opts = {
+      width = 90,                       -- ширина колонки с текстом
+      autocmds = { enableOnVimEnter = true, reloadOnColorSchemeChange = true },
+    },
+  },
+
   -- Затемняет всё, кроме текущего абзаца
   { "folke/twilight.nvim", opts = {} },
 
@@ -410,43 +420,6 @@ local function reflow_sentences(l1, l2)
   vim.api.nvim_buf_set_lines(0, l1 - 1, l2, false, out)
 end
 
--- Визуальное центрирование строк (только отображение, файл не меняется):
--- перед каждой строкой рисуется инлайновый виртуальный отступ до центра окна.
-local center_ns = vim.api.nvim_create_namespace("center_view")
-local function center_view_apply()
-  local win = vim.api.nvim_get_current_win()
-  local buf = vim.api.nvim_win_get_buf(win)
-  vim.api.nvim_buf_clear_namespace(buf, center_ns, 0, -1)
-  if not vim.b[buf].center_view then return end
-  local info = vim.fn.getwininfo(win)[1]
-  local width = info.width - (info.textoff or 0)   -- ширина текстовой области
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  for i, line in ipairs(lines) do
-    local w = vim.fn.strdisplaywidth(line)
-    local pad = math.floor((width - w) / 2)
-    if w > 0 and pad > 0 then
-      vim.api.nvim_buf_set_extmark(buf, center_ns, i - 1, 0, {
-        virt_text = { { string.rep(" ", pad), "NonText" } },
-        virt_text_pos = "inline",
-      })
-    end
-  end
-end
-
-local function center_view_toggle()
-  local buf = vim.api.nvim_get_current_buf()
-  vim.b[buf].center_view = not vim.b[buf].center_view
-  center_view_apply()
-  vim.notify("Центрирование отображения: " .. (vim.b[buf].center_view and "вкл" or "выкл"))
-end
-vim.api.nvim_create_user_command("CenterView", center_view_toggle, {})
-
--- пересчитывать центрирование при правках и изменении размера окна
-vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "WinScrolled", "VimResized", "BufWinEnter" }, {
-  callback = function()
-    if vim.b.center_view then pcall(center_view_apply) end
-  end,
-})
 vim.api.nvim_create_user_command("Sentences", function(o)
   reflow_sentences(o.line1, o.line2)
 end, { range = true })
@@ -486,8 +459,8 @@ end, { desc = "Разбить выделение по 80 символов" })
 map("n", "<leader>fs", "vip:Sentences<cr>", { desc = "Одно предложение на строку (абзац)" })
 map("v", "<leader>fs", ":Sentences<cr>",    { desc = "Одно предложение на строку (выделение)" })
 
--- Центрирование отображения (только визуально, файл не меняется)
-map("n", "<leader>fc", "<cmd>CenterView<cr>", { desc = "Центрировать отображение вкл/выкл" })
+-- Центрированная колонка (как iA Writer) вкл/выкл
+map("n", "<leader>fc", "<cmd>NoNeckPain<cr>", { desc = "Центрированная колонка (iA Writer)" })
 
 -- ИИ
 map({ "n", "v" }, "<leader>ar", ":GpRewrite<cr>",   { desc = "ИИ: переписать" })
