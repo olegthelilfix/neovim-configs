@@ -58,6 +58,15 @@ vim.api.nvim_create_autocmd({ "InsertLeave", "TextChanged", "FocusLost", "BufLea
   callback = autosave,
 })
 
+-- «Пишущая машинка»: строка с курсором держится по центру экрана.
+vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "InsertEnter" }, {
+  callback = function()
+    if vim.bo.buftype == "" then
+      pcall(vim.cmd, "normal! zz")
+    end
+  end,
+})
+
 -- 2.1 Помощники для статусной панели (статистика системы)
 -- Заряд батареи читается из sysfs и кэшируется, обновляясь раз в 30 секунд.
 local sys = { battery = "" }
