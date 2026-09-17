@@ -240,17 +240,33 @@ function _G.autogit_run()
   return "autogit: закоммичено и запушено"
 end
 
-local function autogit_sync()
-  if not vim.g.autogit_enabled then return end
-  _G.autogit_run()
-end
-
 -- ручной запуск с показом результата/ошибки
 vim.api.nvim_create_user_command("AutoGitNow", function()
   vim.notify(_G.autogit_run())
 end, {})
 
-vim.api.nvim_create_autocmd("VimLeavePre", { callback = autogit_sync })
+-- Выход: vim.fn.system во время VimLeavePre обрывается, поэтому используем
+-- os.execute — чистый системный вызов, не зависящий от цикла Neovim.
+local autogit_log = vim.fn.stdpath("state") .. "/autogit.log"
+local function autogit_exit()
+  local f = io.open(autogit_log, "a")
+  if f then f:write(os.date("%Y-%m-%d %H:%M:%S"), "  VimLeavePre\n"); f:close() end
+  if not vim.g.autogit_enabled then return end
+  pcall(vim.cmd, "silent! wall")
+  local file = vim.api.nvim_buf_get_name(0)
+  if file == "" then return end
+  local dir = vim.fn.shellescape(vim.fn.fnamemodify(file, ":h"))
+  local cmd = string.format(
+    "cd %s && git rev-parse --is-inside-work-tree >/dev/null 2>&1 && "
+    .. "[ -n \"$(git status --porcelain)\" ] && "
+    .. "git add -A && git commit -q -m \"auto: %s\" && git push -q "
+    .. ">>%s 2>&1",
+    dir, os.date("%Y-%m-%d %H:%M"), vim.fn.shellescape(autogit_log)
+  )
+  os.execute(cmd)
+end
+
+vim.api.nvim_create_autocmd("VimLeavePre", { callback = autogit_exit })
 
 -- команда :AutoGit on|off — включить/выключить фоновый коммит
 vim.api.nvim_create_user_command("AutoGit", function(cmd)
