@@ -67,32 +67,69 @@ vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "InsertEnter" }, {
   end,
 })
 
--- Виртуальные пустые строки на пол-экрана сверху и снизу — чтобы курсор
--- можно было центрировать даже в начале и конце файла. Файл не меняется.
-local pad_ns = vim.api.nvim_create_namespace("typewriter_pad")
-local function typewriter_pad()
-  local buf = vim.api.nvim_get_current_buf()
-  if vim.bo[buf].buftype ~= "" then return end
-  vim.api.nvim_buf_clear_namespace(buf, pad_ns, 0, -1)
-  local pad = math.floor(vim.api.nvim_win_get_height(0) / 2)
-  if pad < 1 then return end
-  local blank = {}
-  for _ = 1, pad do blank[#blank + 1] = { { " ", "NonText" } } end
-  vim.api.nvim_buf_set_extmark(buf, pad_ns, 0, 0, {
-    virt_lines = blank, virt_lines_above = true,
-  })
-  local last = vim.api.nvim_buf_line_count(buf) - 1
-  vim.api.nvim_buf_set_extmark(buf, pad_ns, last, 0, { virt_lines = blank })
+-- «Печатная машинка» через РЕАЛЬНЫЕ пустые строки по краям буфера: они дают
+-- место для прокрутки, чтобы курсор стоял по центру даже в начале/конце файла.
+-- При записи поля срезаются (на диске файл чистый), после записи — возвращаются.
+local function tw_enabled(buf)
+  return vim.bo[buf].buftype == ""
+    and vim.bo[buf].modifiable
+    and vim.api.nvim_buf_get_name(buf) ~= ""
 end
-vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter", "VimResized", "WinResized", "TextChanged", "TextChangedI" }, {
-  callback = function() vim.schedule(function() pcall(typewriter_pad) end) end,
+
+local function tw_padcount()
+  return math.max(math.floor(vim.api.nvim_win_get_height(0) / 2), 1)
+end
+
+-- срезать пустые строки по краям буфера
+local function tw_strip(buf)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local first, last = 1, #lines
+  while first <= last and lines[first]:match("^%s*$") do first = first + 1 end
+  while last >= first and lines[last]:match("^%s*$") do last = last - 1 end
+  local content = {}
+  for i = first, last do content[#content + 1] = lines[i] end
+  if #content == 0 then content = { "" } end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
+end
+
+-- добавить пустые поля сверху и снизу
+local function tw_pad(buf)
+  local blanks = {}
+  for _ = 1, tw_padcount() do blanks[#blanks + 1] = "" end
+  vim.api.nvim_buf_set_lines(buf, 0, 0, false, blanks)
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, blanks)
+end
+
+-- при открытии файла — добавить поля, буфер считать несохранённым=нет
+vim.api.nvim_create_autocmd("BufReadPost", {
+  callback = function(a)
+    if not tw_enabled(a.buf) then return end
+    vim.schedule(function()
+      if not vim.api.nvim_buf_is_valid(a.buf) then return end
+      tw_pad(a.buf)
+      vim.bo[a.buf].modified = false
+      pcall(vim.cmd, "normal! zz")
+    end)
+  end,
 })
--- отладка: показать высоту окна и число заданных виртуальных полей
-vim.api.nvim_create_user_command("PadDebug", function()
-  typewriter_pad()
-  local marks = vim.api.nvim_buf_get_extmarks(0, pad_ns, 0, -1, {})
-  vim.notify(string.format("высота=%d, полей=%d", vim.api.nvim_win_get_height(0), #marks))
-end, {})
+
+-- при записи — срезать поля до записи и вернуть после (на диске без полей)
+local tw_view
+vim.api.nvim_create_autocmd("BufWritePre", {
+  callback = function(a)
+    if not tw_enabled(a.buf) then return end
+    tw_view = vim.fn.winsaveview()
+    tw_strip(a.buf)
+  end,
+})
+vim.api.nvim_create_autocmd("BufWritePost", {
+  callback = function(a)
+    if not tw_enabled(a.buf) then return end
+    tw_pad(a.buf)
+    vim.bo[a.buf].modified = false
+    if tw_view then pcall(vim.fn.winrestview, tw_view); tw_view = nil end
+  end,
+})
 
 -- 2.1 Помощники для статусной панели (статистика системы)
 -- Заряд батареи читается из sysfs и кэшируется, обновляясь раз в 30 секунд.
