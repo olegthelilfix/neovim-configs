@@ -8,7 +8,7 @@ vim.g.maplocalleader = " "
 
 -- 2. Базовые настройки под прозу
 local opt = vim.opt
-opt.number = false            -- номера строк для текста не нужны
+opt.number = true             -- номера строк
 opt.wrap = true               -- переносить длинные строки
 opt.linebreak = true          -- переносить по словам, а не по буквам
 opt.breakindent = true        -- сохранять отступ при переносе
@@ -32,6 +32,62 @@ vim.api.nvim_create_autocmd("FileType", {
     vim.opt_local.conceallevel = 2
   end,
 })
+
+-- 2.1 Помощники для статусной панели (статистика системы)
+-- Чтобы не запускать pmset на каждой перерисовке, значение батареи
+-- кэшируется и обновляется по таймеру раз в 30 секунд.
+local sys = { battery = "" }
+
+-- прочитать первую строку файла, вернуть nil если файла нет
+local function read_first_line(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local line = f:read("l")
+  f:close()
+  return line
+end
+
+-- найти батарею в sysfs (обычно BAT0, иногда BAT1)
+local function find_battery_path()
+  for _, name in ipairs({ "BAT0", "BAT1", "BAT2" }) do
+    local base = "/sys/class/power_supply/" .. name
+    if read_first_line(base .. "/capacity") then
+      return base
+    end
+  end
+  return nil
+end
+
+local function refresh_battery()
+  -- Linux: заряд и статус лежат в /sys/class/power_supply/BATx/
+  local base = find_battery_path()
+  if not base then
+    sys.battery = ""
+    return
+  end
+  local pct = read_first_line(base .. "/capacity")
+  local status = read_first_line(base .. "/status") or ""
+  if not pct then
+    sys.battery = ""
+    return
+  end
+  local icon = (status == "Charging" or status == "Full") and "" or ""
+  sys.battery = string.format("%s %s%%", icon, pct)
+end
+
+refresh_battery()
+-- периодическое обновление заряда (30 000 мс)
+local batt_timer = (vim.uv or vim.loop).new_timer()
+batt_timer:start(30000, 30000, vim.schedule_wrap(refresh_battery))
+
+-- Статистика текста: слова и знаки (в выделении — только выделенное)
+local function text_stats()
+  local wc = vim.fn.wordcount()
+  if wc.visual_words then
+    return string.format(" %d сл  %d зн (выд.)", wc.visual_words, wc.visual_chars)
+  end
+  return string.format(" %d сл  %d зн", wc.words, wc.chars)
+end
 
 -- 3. Установка менеджера плагинов lazy.nvim (ставится сам при первом запуске)
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
@@ -76,20 +132,53 @@ require("lazy").setup({
   -- Подсветка синтаксиса, в т.ч. markdown (новая ветка main)
   {
     "nvim-treesitter/nvim-treesitter",
-    branch = "main",
     build = ":TSUpdate",
     config = function()
-      -- установить нужные парсеры
-      require("nvim-treesitter").install({ "markdown", "markdown_inline", "lua" })
-      -- включать подсветку для нужных типов файлов
-      vim.api.nvim_create_autocmd("FileType", {
-        pattern = { "markdown", "text", "lua" },
-        callback = function()
-          pcall(vim.treesitter.start)
-        end,
+      require("nvim-treesitter.configs").setup({
+        -- нужные парсеры ставятся автоматически
+        ensure_installed = { "markdown", "markdown_inline", "lua" },
+        highlight = { enable = true },
       })
     end,
   },
+  -- Статусная панель: статистика текста + системы
+  {
+    "nvim-lualine/lualine.nvim",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    config = function()
+      require("lualine").setup({
+        options = {
+          theme = "kanagawa",
+          globalstatus = true,          -- одна панель на всё окно
+          section_separators = "",
+          component_separators = "│",
+        },
+        sections = {
+          -- слева: режим и файл
+          lualine_a = { "mode" },
+          lualine_b = { { "filename", path = 1 } },
+          lualine_c = {},
+          -- справа: статистика текста → система
+          lualine_x = { text_stats },
+          lualine_y = {
+            { function() return sys.battery end, cond = function() return sys.battery ~= "" end },
+            { function() return os.date("%d.%m %H:%M") end, icon = "" },
+          },
+          lualine_z = { "location" },
+        },
+        -- в неактивных окнах — минимум
+        inactive_sections = {
+          lualine_a = {},
+          lualine_b = {},
+          lualine_c = { "filename" },
+          lualine_x = { "location" },
+          lualine_y = {},
+          lualine_z = {},
+        },
+      })
+    end,
+  },
+
   -- Поиск по файлам и заметкам
   {
     "nvim-telescope/telescope.nvim",
