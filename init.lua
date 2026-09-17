@@ -256,11 +256,10 @@ local function autogit_exit()
   local file = vim.api.nvim_buf_get_name(0)
   if file == "" then return end
   local dir = vim.fn.shellescape(vim.fn.fnamemodify(file, ":h"))
+  -- весь блок в фигурных скобках, весь вывод — в лог (для диагностики)
   local cmd = string.format(
-    "cd %s && git rev-parse --is-inside-work-tree >/dev/null 2>&1 && "
-    .. "[ -n \"$(git status --porcelain)\" ] && "
-    .. "git add -A && git commit -q -m \"auto: %s\" && git push -q "
-    .. ">>%s 2>&1",
+    "{ echo '--- exit run ---'; cd %s && git add -A "
+    .. "&& git commit -m \"auto: %s\" && git push; } >>%s 2>&1",
     dir, os.date("%Y-%m-%d %H:%M"), vim.fn.shellescape(autogit_log)
   )
   os.execute(cmd)
