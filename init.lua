@@ -400,6 +400,7 @@ vim.api.nvim_create_user_command("NewChapter", insert_chapter_template, {})
 -- 4.3 «Одно предложение на строку»: склеивает диапазон в один абзац и заново
 -- разбивает по предложениям (после . ! ? …). Чинит супердлинную вставку,
 -- не рвя предложения. Работает на диапазоне (:Sentences) и на выделении.
+local SENTENCE_WIDTH = 80  -- поле, в котором центрируются строки
 local function reflow_sentences(l1, l2)
   local lines = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
   local text = table.concat(lines, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
@@ -407,6 +408,16 @@ local function reflow_sentences(l1, l2)
   -- перенос строки после конца предложения (. ! ? … и необязательной кавычки)
   text = text:gsub('([%.%!%?…]+["»\'%)]?)%s+', "%1\n")
   local out = vim.split(text, "\n", { trimempty = true })
+  -- центрирование каждой строки: ведущие пробелы до середины поля
+  for i, line in ipairs(out) do
+    local s = line:gsub("^%s+", "")
+    local w = vim.fn.strdisplaywidth(s)
+    if w < SENTENCE_WIDTH then
+      out[i] = string.rep(" ", math.floor((SENTENCE_WIDTH - w) / 2)) .. s
+    else
+      out[i] = s
+    end
+  end
   vim.api.nvim_buf_set_lines(0, l1 - 1, l2, false, out)
 end
 vim.api.nvim_create_user_command("Sentences", function(o)
