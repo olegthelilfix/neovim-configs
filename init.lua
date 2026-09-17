@@ -256,6 +256,11 @@ end, { nargs = "?", complete = function() return { "on", "off" } end })
 -- git обрывается уходящим Neovim и коммита не происходит.
 function _G.write_then_quit()
   vim.cmd("silent! write")   -- триггерит BufWritePost → синхронный коммит завершается тут
+  -- синхронный пуш, чтобы успеть до выхода (иначе фоновый пуш не доживёт)
+  local file = vim.api.nvim_buf_get_name(0)
+  if vim.g.autogit_enabled and file ~= "" then
+    pcall(vim.fn.system, { "git", "-C", vim.fs.dirname(file), "push" })
+  end
   vim.cmd("quit")
 end
 vim.keymap.set("n", "ZZ", _G.write_then_quit, { desc = "Сохранить, закоммитить и выйти" })
