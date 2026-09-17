@@ -16,8 +16,16 @@ opt.showbreak = "↳ "          -- маркер переноса
 opt.mouse = "a"               -- мышь, если терминал её поддерживает
 opt.clipboard = "unnamedplus" -- общий системный буфер (нужен xclip/wl-clipboard)
 opt.termguicolors = true      -- 24-битный цвет (нужен современный терминал)
-opt.scrolloff = 8             -- держать курсор не у самого края
+opt.scrolloff = 999           -- «печатная машинка»: текущая строка всегда по центру
 opt.timeoutlen = 400          -- время ожидания продолжения комбинации
+opt.updatetime = 1000         -- через сколько простоя срабатывает автосохранение
+
+-- Русская раскладка в командах: в НОРМАЛЬНОМ режиме команды работают,
+-- даже если включена русская раскладка ОС (фыва → asdf и т.д.).
+-- На текст в режиме вставки не влияет.
+opt.langmap =
+  "ФИСВУАПРШОЛДЬТЩЗЙКЫЕГМЦЧНЯ;ABCDEFGHIJKLMNOPQRSTUVWXYZ," ..
+  "фисвуапршолдьтщзйкыегмцчня;abcdefghijklmnopqrstuvwxyz"
 
 -- Орфография: русский + английский
 opt.spell = true
@@ -33,9 +41,25 @@ vim.api.nvim_create_autocmd("FileType", {
   end,
 })
 
+-- Автосохранение: пишем файл при простое, выходе из вставки и потере фокуса.
+-- Пишется только настоящий именованный файл с несохранёнными правками.
+local function autosave()
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.bo[buf].modified
+    and vim.bo[buf].buftype == ""
+    and vim.api.nvim_buf_get_name(buf) ~= ""
+    and vim.bo[buf].modifiable
+  then
+    vim.cmd("silent! write")
+  end
+end
+
+vim.api.nvim_create_autocmd({ "InsertLeave", "TextChanged", "FocusLost", "BufLeave" }, {
+  callback = autosave,
+})
+
 -- 2.1 Помощники для статусной панели (статистика системы)
--- Чтобы не запускать pmset на каждой перерисовке, значение батареи
--- кэшируется и обновляется по таймеру раз в 30 секунд.
+-- Заряд батареи читается из sysfs и кэшируется, обновляясь раз в 30 секунд.
 local sys = { battery = "" }
 
 -- прочитать первую строку файла, вернуть nil если файла нет
@@ -58,6 +82,38 @@ local function find_battery_path()
   return nil
 end
 
+-- перевести часы (дробные) в «Nч Mм»
+local function fmt_hours(h)
+  if not h or h <= 0 then return nil end
+  local total_min = math.floor(h * 60 + 0.5)
+  local hh = math.floor(total_min / 60)
+  local mm = total_min % 60
+  if hh > 0 then
+    return string.format("%dч %02dм", hh, mm)
+  end
+  return string.format("%dм", mm)
+end
+
+-- оценить оставшееся время из sysfs
+-- (energy_now/power_now — в мкВт·ч/мкВт, либо charge_now/current_now — в мкА·ч/мкА)
+local function battery_time(base, charging)
+  local energy = tonumber(read_first_line(base .. "/energy_now"))
+    or tonumber(read_first_line(base .. "/charge_now"))
+  local power = tonumber(read_first_line(base .. "/power_now"))
+    or tonumber(read_first_line(base .. "/current_now"))
+  local full = tonumber(read_first_line(base .. "/energy_full"))
+    or tonumber(read_first_line(base .. "/charge_full"))
+  if not energy or not power or power == 0 then return nil end
+  local remaining
+  if charging then
+    if not full then return nil end
+    remaining = (full - energy) / power   -- до полной зарядки
+  else
+    remaining = energy / power            -- до разрядки
+  end
+  return fmt_hours(remaining)
+end
+
 local function refresh_battery()
   -- Linux: заряд и статус лежат в /sys/class/power_supply/BATx/
   local base = find_battery_path()
@@ -71,8 +127,16 @@ local function refresh_battery()
     sys.battery = ""
     return
   end
-  local icon = (status == "Charging" or status == "Full") and "" or ""
-  sys.battery = string.format("%s %s%%", icon, pct)
+  local charging = (status == "Charging" or status == "Full")
+  local icon = charging and "" or ""
+  local time = battery_time(base, charging)
+  if status == "Full" then
+    sys.battery = string.format("%s %s%%", icon, pct)
+  elseif time then
+    sys.battery = string.format("%s %s%% (%s)", icon, pct, time)
+  else
+    sys.battery = string.format("%s %s%%", icon, pct)
+  end
 end
 
 refresh_battery()
@@ -102,6 +166,69 @@ function _G.writer_status_right()
   parts[#parts + 1] = os.date("%d.%m %H:%M")
   return table.concat(parts, "   ·   ")
 end
+
+-- Текущий режим по-русски (виден в панели в любом состоянии)
+local mode_names = {
+  n = "НОРМ", i = "ВСТАВКА", v = "ВИЗУАЛ", V = "ВИЗУАЛ-СТР",
+  ["\22"] = "ВИЗУАЛ-БЛОК", c = "КОМАНДА", R = "ЗАМЕНА",
+  s = "ВЫДЕЛ", t = "ТЕРМИНАЛ", ["!"] = "ШЕЛЛ",
+}
+function _G.writer_mode()
+  return mode_names[vim.fn.mode()] or vim.fn.mode():upper()
+end
+
+-- Фоновый авто-коммит и пуш репозитория с текстом (раз в несколько минут).
+-- Работает с git-репозиторием, в котором лежит текущий файл. Отключить: :AutoGit off
+vim.g.autogit_enabled = true
+
+local function autogit()
+  if not vim.g.autogit_enabled then return end
+  -- сначала сохраняем все буферы
+  pcall(vim.cmd, "silent! wall")
+  local file = vim.api.nvim_buf_get_name(0)
+  if file == "" then return end
+  local dir = vim.fs.dirname(file)
+
+  vim.system({ "git", "-C", dir, "rev-parse", "--is-inside-work-tree" }, { text = true }, function(res)
+    if res.code ~= 0 then return end -- не git-репозиторий
+    vim.system({ "git", "-C", dir, "status", "--porcelain" }, { text = true }, function(st)
+      if (st.stdout or "") == "" then return end -- нет изменений
+      local msg = "auto: " .. os.date("%Y-%m-%d %H:%M")
+      vim.system({ "git", "-C", dir, "add", "-A" }, {}, function(a)
+        if a.code ~= 0 then return end
+        vim.system({ "git", "-C", dir, "commit", "-m", msg }, {}, function(c)
+          if c.code ~= 0 then return end
+          -- пуш; если нет удалёнки или нет сети — тихо игнорируем
+          vim.system({ "git", "-C", dir, "push" }, { text = true }, function(p)
+            if p.code ~= 0 then
+              vim.schedule(function()
+                vim.notify("autogit: коммит сделан, пуш не удался", vim.log.levels.WARN)
+              end)
+            end
+          end)
+        end)
+      end)
+    end)
+  end)
+end
+
+-- запуск раз в 3 минуты (180 000 мс)
+local git_timer = (vim.uv or vim.loop).new_timer()
+git_timer:start(180000, 180000, vim.schedule_wrap(autogit))
+
+-- команда :AutoGit on|off — включить/выключить фоновый коммит
+vim.api.nvim_create_user_command("AutoGit", function(cmd)
+  local arg = cmd.args:lower()
+  if arg == "off" then
+    vim.g.autogit_enabled = false
+    vim.notify("autogit: выключен")
+  elseif arg == "on" then
+    vim.g.autogit_enabled = true
+    vim.notify("autogit: включён")
+  else
+    vim.notify("autogit: " .. (vim.g.autogit_enabled and "включён" or "выключен"))
+  end
+end, { nargs = "?", complete = function() return { "on", "off" } end })
 
 -- 3. Установка менеджера плагинов lazy.nvim (ставится сам при первом запуске)
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
@@ -175,14 +302,21 @@ require("lazy").setup({
           openai    = { secret = os.getenv("OPENAI_API_KEY") },
           anthropic = { secret = os.getenv("ANTHROPIC_API_KEY") },
         },
-        -- своя команда :GpProofread — вычитка с сохранением стиля
         hooks = {
+          -- :GpProofread — вычитка с сохранением стиля
           Proofread = function(gp, params)
             local template = "Ты внимательный редактор. Исправь орфографию, "
               .. "пунктуацию и грамматику в тексте ниже. Сохрани авторский "
               .. "стиль, интонацию и смысл. Верни только исправленный текст, "
               .. "без комментариев.\n\n{{selection}}"
             gp.Prompt(params, gp.Target.rewrite, gp.get_command_agent(), template)
+          end,
+          -- :GpSynonyms — синонимы к выделенному слову/выражению (во всплывающем окне)
+          Synonyms = function(gp, params)
+            local template = "Подбери 10 синонимов на русском к слову или выражению ниже. "
+              .. "Учитывай контекст, если он есть. Верни списком через запятую, "
+              .. "без пояснений и нумерации.\n\n{{selection}}"
+            gp.Prompt(params, gp.Target.popup, gp.get_command_agent(), template)
           end,
         },
       })
@@ -197,21 +331,45 @@ require("lazy").setup({
 -- Слева: файл и флаг изменения. Справа: слова/знаки · батарея · дата/время · позиция.
 vim.opt.laststatus = 3   -- одна панель на всё окно
 vim.opt.statusline = table.concat({
-  " %f",                          -- имя файла
+  " %{v:lua.writer_mode()} ",     -- текущий режим (НОРМ/ВСТАВКА/…)
+  "  %f",                         -- имя файла
   " %m",                          -- [+] если есть несохранённые правки
   "%=",                           -- выравнивание вправо
   "%{v:lua.writer_status_right()}",
   "   ·   %l:%c ",                -- строка:столбец
 })
 
+-- 4.2 Шаблон новой главы: вставляет заголовок с датой в текущий буфер
+local ru_weekdays = { "воскресенье", "понедельник", "вторник", "среда",
+  "четверг", "пятница", "суббота" }
+local function insert_chapter_template()
+  local wday = tonumber(os.date("%w")) + 1
+  local date = string.format("%s, %s", ru_weekdays[wday], os.date("%d.%m.%Y"))
+  local lines = {
+    "# ",
+    "",
+    "*" .. date .. "*",
+    "",
+    "",
+  }
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  vim.api.nvim_buf_set_lines(0, row - 1, row - 1, false, lines)
+  -- поставить курсор после «# » в режим вставки
+  vim.api.nvim_win_set_cursor(0, { row, 2 })
+  vim.cmd("startinsert!")
+end
+vim.api.nvim_create_user_command("NewChapter", insert_chapter_template, {})
+
 -- 5. Горячие клавиши (все начинаются с пробела)
 local map = vim.keymap.set
 
 map("n", "<leader>z",  "<cmd>ZenMode<cr>",   { desc = "Режим фокуса" })
 map("n", "<leader>ts", "<cmd>set spell!<cr>", { desc = "Вкл/выкл орфографию" })
+map("n", "<leader>ng", insert_chapter_template, { desc = "Новая глава (шаблон)" })
 -- z= (варианты замены слова) и zg (добавить в словарь) работают по умолчанию
 
 -- ИИ
 map({ "n", "v" }, "<leader>ar", ":GpRewrite<cr>",   { desc = "ИИ: переписать" })
 map("v",          "<leader>ap", ":GpProofread<cr>", { desc = "ИИ: вычитать" })
 map({ "n", "v" }, "<leader>ac", ":GpChatNew<cr>",   { desc = "ИИ: новый чат" })
+map("v",          "<leader>as", ":GpSynonyms<cr>",  { desc = "ИИ: синонимы" })
