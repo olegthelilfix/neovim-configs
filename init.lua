@@ -397,6 +397,22 @@ local function insert_chapter_template()
 end
 vim.api.nvim_create_user_command("NewChapter", insert_chapter_template, {})
 
+-- 4.3 «Одно предложение на строку»: склеивает диапазон в один абзац и заново
+-- разбивает по предложениям (после . ! ? …). Чинит супердлинную вставку,
+-- не рвя предложения. Работает на диапазоне (:Sentences) и на выделении.
+local function reflow_sentences(l1, l2)
+  local lines = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
+  local text = table.concat(lines, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+  if text == "" then return end
+  -- перенос строки после конца предложения (. ! ? … и необязательной кавычки)
+  text = text:gsub('([%.%!%?…]+["»\'%)]?)%s+', "%1\n")
+  local out = vim.split(text, "\n", { trimempty = true })
+  vim.api.nvim_buf_set_lines(0, l1 - 1, l2, false, out)
+end
+vim.api.nvim_create_user_command("Sentences", function(o)
+  reflow_sentences(o.line1, o.line2)
+end, { range = true })
+
 -- 5. Горячие клавиши (все начинаются с пробела)
 local map = vim.keymap.set
 
@@ -427,6 +443,10 @@ map("v", "<leader>fw", function()
   vim.cmd("normal! gq")
   vim.bo.textwidth = tw
 end, { desc = "Разбить выделение по 80 символов" })
+
+-- Одно предложение на строку: абзац под курсором / выделение
+map("n", "<leader>fs", "vip:Sentences<cr>", { desc = "Одно предложение на строку (абзац)" })
+map("v", "<leader>fs", ":Sentences<cr>",    { desc = "Одно предложение на строку (выделение)" })
 
 -- ИИ
 map({ "n", "v" }, "<leader>ar", ":GpRewrite<cr>",   { desc = "ИИ: переписать" })
