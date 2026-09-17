@@ -216,25 +216,39 @@ end
 local git_timer = (vim.uv or vim.loop).new_timer()
 git_timer:start(180000, 180000, vim.schedule_wrap(autogit))
 
--- При выходе из Neovim коммитим и пушим синхронно через vim.fn.system
--- (vim.system():wait() на выходе обрывается — дочерние процессы гасятся).
-local function autogit_sync()
-  if not vim.g.autogit_enabled then return end
+-- Синхронный коммит+пуш через vim.fn.system. Возвращает строку-результат.
+-- Используется и при выходе (VimLeavePre), и вручную командой :AutoGitNow.
+function _G.autogit_run()
   pcall(vim.cmd, "silent! wall")
   local file = vim.api.nvim_buf_get_name(0)
-  if file == "" then return end
+  if file == "" then return "autogit: нет имени файла" end
   local dir = vim.fs.dirname(file)
   local function git(...)
     local out = vim.fn.system({ "git", "-C", dir, ... })
-    return vim.v.shell_error, out
+    return vim.v.shell_error, (out or "")
   end
-  if git("rev-parse", "--is-inside-work-tree") ~= 0 then return end
+  if git("rev-parse", "--is-inside-work-tree") ~= 0 then
+    return "autogit: не git-репозиторий (" .. dir .. ")"
+  end
   local _, status = git("status", "--porcelain")
-  if not status or status == "" then return end
+  if status == "" then return "autogit: нет изменений" end
   git("add", "-A")
-  if git("commit", "-m", "auto: " .. os.date("%Y-%m-%d %H:%M")) ~= 0 then return end
-  git("push")
+  local code, out = git("commit", "-m", "auto: " .. os.date("%Y-%m-%d %H:%M"))
+  if code ~= 0 then return "autogit: commit не удался — " .. out end
+  code, out = git("push")
+  if code ~= 0 then return "autogit: коммит есть, push не удался — " .. out end
+  return "autogit: закоммичено и запушено"
 end
+
+local function autogit_sync()
+  if not vim.g.autogit_enabled then return end
+  _G.autogit_run()
+end
+
+-- ручной запуск с показом результата/ошибки
+vim.api.nvim_create_user_command("AutoGitNow", function()
+  vim.notify(_G.autogit_run())
+end, {})
 
 vim.api.nvim_create_autocmd("VimLeavePre", { callback = autogit_sync })
 
