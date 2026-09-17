@@ -400,6 +400,13 @@ vim.api.nvim_create_user_command("NewChapter", insert_chapter_template, {})
 -- 5. Горячие клавиши (все начинаются с пробела)
 local map = vim.keymap.set
 
+-- Движение по ВИДИМЫМ строкам: в длинном мягко-перенесённом абзаце j/k
+-- ходят построчно по экрану, а не прыгают через весь абзац.
+map({ "n", "v" }, "j", "gj", { desc = "Вниз по видимой строке" })
+map({ "n", "v" }, "k", "gk", { desc = "Вверх по видимой строке" })
+map({ "n", "v" }, "<Down>", "gj")
+map({ "n", "v" }, "<Up>",   "gk")
+
 map("n", "<leader>z",  "<cmd>ZenMode<cr>",   { desc = "Режим фокуса" })
 map("n", "<leader>ts", "<cmd>set spell!<cr>", { desc = "Вкл/выкл орфографию" })
 map("n", "<leader>ng", insert_chapter_template, { desc = "Новая глава (шаблон)" })
