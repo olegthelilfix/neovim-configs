@@ -67,6 +67,27 @@ vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "InsertEnter" }, {
   end,
 })
 
+-- Виртуальные пустые строки на пол-экрана сверху и снизу — чтобы курсор
+-- можно было центрировать даже в начале и конце файла. Файл не меняется.
+local pad_ns = vim.api.nvim_create_namespace("typewriter_pad")
+local function typewriter_pad()
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.bo[buf].buftype ~= "" then return end
+  vim.api.nvim_buf_clear_namespace(buf, pad_ns, 0, -1)
+  local pad = math.floor(vim.api.nvim_win_get_height(0) / 2)
+  if pad < 1 then return end
+  local blank = {}
+  for _ = 1, pad do blank[#blank + 1] = { { "", "NonText" } } end
+  vim.api.nvim_buf_set_extmark(buf, pad_ns, 0, 0, {
+    virt_lines = blank, virt_lines_above = true,
+  })
+  local last = vim.api.nvim_buf_line_count(buf) - 1
+  vim.api.nvim_buf_set_extmark(buf, pad_ns, last, 0, { virt_lines = blank })
+end
+vim.api.nvim_create_autocmd({ "BufWinEnter", "VimResized", "WinResized", "TextChanged", "TextChangedI" }, {
+  callback = function() pcall(typewriter_pad) end,
+})
+
 -- 2.1 Помощники для статусной панели (статистика системы)
 -- Заряд батареи читается из sysfs и кэшируется, обновляясь раз в 30 секунд.
 local sys = { battery = "" }
