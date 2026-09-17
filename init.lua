@@ -400,7 +400,6 @@ vim.api.nvim_create_user_command("NewChapter", insert_chapter_template, {})
 -- 4.3 «Одно предложение на строку»: склеивает диапазон в один абзац и заново
 -- разбивает по предложениям (после . ! ? …). Чинит супердлинную вставку,
 -- не рвя предложения. Работает на диапазоне (:Sentences) и на выделении.
-local SENTENCE_WIDTH = 80  -- поле, в котором центрируются строки
 local function reflow_sentences(l1, l2)
   local lines = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
   local text = table.concat(lines, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
@@ -408,18 +407,46 @@ local function reflow_sentences(l1, l2)
   -- перенос строки после конца предложения (. ! ? … и необязательной кавычки)
   text = text:gsub('([%.%!%?…]+["»\'%)]?)%s+', "%1\n")
   local out = vim.split(text, "\n", { trimempty = true })
-  -- центрирование каждой строки: ведущие пробелы до середины поля
-  for i, line in ipairs(out) do
-    local s = line:gsub("^%s+", "")
-    local w = vim.fn.strdisplaywidth(s)
-    if w < SENTENCE_WIDTH then
-      out[i] = string.rep(" ", math.floor((SENTENCE_WIDTH - w) / 2)) .. s
-    else
-      out[i] = s
-    end
-  end
   vim.api.nvim_buf_set_lines(0, l1 - 1, l2, false, out)
 end
+
+-- Визуальное центрирование строк (только отображение, файл не меняется):
+-- перед каждой строкой рисуется инлайновый виртуальный отступ до центра окна.
+local center_ns = vim.api.nvim_create_namespace("center_view")
+local function center_view_apply()
+  local win = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_win_get_buf(win)
+  vim.api.nvim_buf_clear_namespace(buf, center_ns, 0, -1)
+  if not vim.b[buf].center_view then return end
+  local info = vim.fn.getwininfo(win)[1]
+  local width = info.width - (info.textoff or 0)   -- ширина текстовой области
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for i, line in ipairs(lines) do
+    local w = vim.fn.strdisplaywidth(line)
+    local pad = math.floor((width - w) / 2)
+    if w > 0 and pad > 0 then
+      vim.api.nvim_buf_set_extmark(buf, center_ns, i - 1, 0, {
+        virt_text = { { string.rep(" ", pad), "NonText" } },
+        virt_text_pos = "inline",
+      })
+    end
+  end
+end
+
+local function center_view_toggle()
+  local buf = vim.api.nvim_get_current_buf()
+  vim.b[buf].center_view = not vim.b[buf].center_view
+  center_view_apply()
+  vim.notify("Центрирование отображения: " .. (vim.b[buf].center_view and "вкл" or "выкл"))
+end
+vim.api.nvim_create_user_command("CenterView", center_view_toggle, {})
+
+-- пересчитывать центрирование при правках и изменении размера окна
+vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "WinScrolled", "VimResized", "BufWinEnter" }, {
+  callback = function()
+    if vim.b.center_view then pcall(center_view_apply) end
+  end,
+})
 vim.api.nvim_create_user_command("Sentences", function(o)
   reflow_sentences(o.line1, o.line2)
 end, { range = true })
@@ -458,6 +485,9 @@ end, { desc = "Разбить выделение по 80 символов" })
 -- Одно предложение на строку: абзац под курсором / выделение
 map("n", "<leader>fs", "vip:Sentences<cr>", { desc = "Одно предложение на строку (абзац)" })
 map("v", "<leader>fs", ":Sentences<cr>",    { desc = "Одно предложение на строку (выделение)" })
+
+-- Центрирование отображения (только визуально, файл не меняется)
+map("n", "<leader>fc", "<cmd>CenterView<cr>", { desc = "Центрировать отображение вкл/выкл" })
 
 -- ИИ
 map({ "n", "v" }, "<leader>ar", ":GpRewrite<cr>",   { desc = "ИИ: переписать" })
